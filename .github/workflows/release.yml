@@ -33,5 +33,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" out/* --title "Airfoils & Wings $VERSION" \
-            --notes "Airfoil and wing designer plugin for SolidCraft. Install the zip from Preferences > Plugins > Install plugin…, or unzip it into your SolidCraft plugins folder; see the README."
+          # Works for a pushed tag and for a release created on GitHub (which makes the tag):
+          # attach the zip to the release if it is already there, otherwise create it.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" out/* --title "Airfoils & Wings $VERSION" \
+              --notes "Airfoil and wing designer plugin for SolidCraft. Install the zip from Preferences > Plugins > Install plugin…, or unzip it into your SolidCraft plugins folder; see the README."
+          fi
