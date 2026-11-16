@@ -71,7 +71,7 @@ XZ. All lengths are in mm and all angles in degrees.
 | `winglet_cant` | 15 | Angle from vertical: 0 points straight up, 90 continues in the wing's plane, 180 points straight down |
 | `winglet_radius` | 30 | Radius of the curved blend from wing to winglet, in % of the tip chord. It is refused if it is too tight for the tip section |
 | `winglet_taper` | 0.5 | Winglet tip chord / wing tip chord |
-| `winglet_sweep` | 30 | Sweep of the winglet's twist-axis line. Positive sweeps it aft |
+| `winglet_sweep` | 30 | Sweep of the winglet's twist-axis line along its path from the wing tip. Positive sweeps it aft |
 | `winglet_toe` | 0 | Toe angle at the winglet tip, added gradually along the winglet. Positive turns the leading edge outboard |
 | `winglet_airfoil`, `winglet_coordinates` | *(same as the wing tip)* | The winglet's airfoil. It blends in from the wing tip's airfoil around the curve |
 | `name` | `Wing` | Name of the loft and its body. The sections are named `<name> section N`, `<name> winglet section N` and `<name> tip section N` |
@@ -95,11 +95,12 @@ A winglet starts at the wing's tip section. Its sections run around a circular b
 `winglet_radius`, in a plane across the span, until they reach the cant angle. Then they run
 straight for `winglet_height`. Each section is cut at right angles to that path.
 
-- **Chord:** stays the wing tip's through the blend, then tapers to `winglet_taper` times the wing
-  tip chord.
+- **Chord, sweep and toe:** change evenly along the whole path, blend included, so the edges carry
+  on smoothly from the wing tip. The chord tapers to `winglet_taper` times the wing tip chord.
+  Sweep moves the twist-axis line aft by tan(`winglet_sweep`) for each mm along the path.
 - **Airfoil:** changes from the wing tip's airfoil to the winglet's airfoil around the blend.
-- **Angle:** keeps the wing tip's twist. The toe angle is then added gradually along the straight
-  part.
+- **Angle:** keeps the wing tip's twist, plus the toe angle, which is added gradually along the
+  winglet.
 
 On an upward winglet, the airfoil's upper surface faces inboard.
 

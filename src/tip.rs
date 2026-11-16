@@ -121,9 +121,9 @@ pub fn validate_winglet(w: &Winglet) -> Result<(), (String, String)> {
 }
 
 /// The winglet's sections after the wing tip (which is not repeated): around a circular blend
-/// in the YZ plane, then straight out along the cant direction. The chord stays the wing tip's
-/// through the blend, then tapers; the airfoil blends from the wing tip's to the winglet's
-/// through the blend.
+/// in the YZ plane, then straight out along the cant direction. Chord, sweep and toe change
+/// evenly along the whole path from the wing tip; the airfoil blends from the wing tip's to the
+/// winglet's through the blend.
 pub fn winglet_frames(p: &WingParams, tip: &Section, tip_foil: &Airfoil, foil: &Airfoil, w: &Winglet) -> Result<Vec<Frame>, (String, String)> {
     let elev = (90.0 - w.cant_deg).to_radians(); // angle above the horizontal
     let sign = if elev < 0.0 { -1.0 } else { 1.0 };
@@ -150,12 +150,20 @@ pub fn winglet_frames(p: &WingParams, tip: &Section, tip_foil: &Airfoil, foil: &
             angle_deg: angle,
         }
     };
+    // Taper, sweep and toe run along the whole path from the wing tip, blend included, so the
+    // edges carry on smoothly instead of kinking where the blend ends.
+    let bend_len = r * elev.abs();
+    let total = bend_len + w.height;
+    let tan_sweep = w.sweep_deg.to_radians().tan();
+    let chord_at = |len: f64| tip.chord * (1.0 + (w.taper_ratio - 1.0) * len / total);
+    let axis_at = |len: f64| x_axis + len * tan_sweep;
     for i in 1..=bend_steps {
         let t = i as f64 / bend_steps as f64;
         let a = elev * t;
+        let len = bend_len * t;
         let (y, z) = (y0 + r * a.abs().sin(), z0 + sign * r * (1.0 - a.cos()));
         let f = tip_foil.lerp(foil, t);
-        let fr = frame_at(y, z, a, tip.chord, x_axis, tip.angle_deg, &f);
+        let fr = frame_at(y, z, a, chord_at(len), axis_at(len), tip.angle_deg + toe(len / total), &f);
         // The inside of the bend must clear the section, or the loft folds over itself.
         let inside = fr.outline.iter().map(|q| sign * q[1]).fold(f64::NEG_INFINITY, f64::max);
         if inside >= 0.9 * r {
@@ -170,25 +178,30 @@ pub fn winglet_frames(p: &WingParams, tip: &Section, tip_foil: &Airfoil, foil: &
     let (se, ce) = elev.sin_cos();
     let steps = 3;
     for j in 1..=steps {
-        let f = j as f64 / steps as f64;
-        let d = w.height * f;
-        let chord = tip.chord * (1.0 + (w.taper_ratio - 1.0) * f);
-        let x_ax = x_axis + d * w.sweep_deg.to_radians().tan();
-        let fr = frame_at(y1 + d * ce, z1 + d * se, elev, chord, x_ax, tip.angle_deg + toe(f), foil);
+        let d = w.height * j as f64 / steps as f64;
+        let len = bend_len + d;
+        let fr = frame_at(y1 + d * ce, z1 + d * se, elev, chord_at(len), axis_at(len), tip.angle_deg + toe(len / total), foil);
         frames.push(fr);
     }
     Ok(frames)
 }
 
-/// A rounded cap after `end`: copies of its section scaled down toward its `center` along a
-/// quarter ellipse of length `length`, closed with an apex point.
+/// How far round the quarter ellipse the last section of a rounded tip is, as a fraction of the
+/// quarter turn. SolidCraft lofts to a point only from a single section, so the cap's main loft
+/// stops at this small section (8 % of the end chord) and a short second loft closes it on the
+/// apex.
+pub const CAP_LAST: f64 = 0.95;
+
+/// A rounded cap after `end`: `steps` copies of its section scaled down toward its `center`
+/// along a quarter ellipse of length `length`, then the apex point. The last frame is the apex.
 pub fn cap_frames(end: &Frame, length: f64, steps: usize) -> Vec<Frame> {
     let q = end.center;
-    (1..=steps)
+    (1..=steps + 1)
         .map(|i| {
-            let phi = std::f64::consts::FRAC_PI_2 * i as f64 / steps as f64;
+            let apex = i == steps + 1;
+            let phi = std::f64::consts::FRAC_PI_2 * if apex { 1.0 } else { CAP_LAST * i as f64 / steps as f64 };
             let d = length * phi.sin();
-            let s = if i == steps { 0.0 } else { phi.cos() };
+            let s = if apex { 0.0 } else { phi.cos() };
             let t = end.tangent;
             let origin = [end.origin[0] + d * t[0], end.origin[1] + d * t[1], end.origin[2] + d * t[2]];
             let shrink = |p: [f64; 2]| [q[0] + s * (p[0] - q[0]), q[1] + s * (p[1] - q[1])];
@@ -196,8 +209,8 @@ pub fn cap_frames(end: &Frame, length: f64, steps: usize) -> Vec<Frame> {
                 origin,
                 y_dir: end.y_dir,
                 tangent: end.tangent,
-                outline: if i == steps { Vec::new() } else { end.outline.iter().map(|&p| shrink(p)).collect() },
-                apex: if i == steps { Some(q) } else { None },
+                outline: if apex { Vec::new() } else { end.outline.iter().map(|&p| shrink(p)).collect() },
+                apex: if apex { Some(q) } else { None },
                 center: q,
                 chord: end.chord * s,
                 airfoil: end.airfoil.clone(),
@@ -314,7 +327,7 @@ mod tests {
         let s = p.section(1.0, &foil);
         let end = panel_frame(&p, &s, &foil);
         let cap = cap_frames(&end, 50.0, 5);
-        assert_eq!(cap.len(), 5);
+        assert_eq!(cap.len(), 6);
         let apex = cap.last().unwrap();
         assert!(apex.outline.is_empty());
         assert_eq!(apex.apex, Some(end.center));
@@ -323,7 +336,7 @@ mod tests {
         // Each section is smaller than the last.
         let width = |f: &Frame| f.outline.iter().map(|q| q[0]).fold(f64::NEG_INFINITY, f64::max) - f.outline.iter().map(|q| q[0]).fold(f64::INFINITY, f64::min);
         let mut prev = width(&end);
-        for f in &cap[..4] {
+        for f in &cap[..5] {
             let w = width(f);
             assert!(w < prev);
             prev = w;

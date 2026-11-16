@@ -251,12 +251,17 @@ pub fn make_wing<R: Runner>(r: &mut R, w: &WingInput) -> Result<Value, String> {
     }
     if let TipStyle::Rounded(len) = w.tip_style {
         let length = len * end_frame.chord;
-        let frames = tip::cap_frames(&end_frame, length, 5);
+        let frames = tip::cap_frames(&end_frame, length, 6);
         let mut lrefs = vec![end_ref];
         for (i, f) in frames.iter().enumerate() {
             lrefs.push(draw_frame(r, f, &format!("{} tip section {}", w.name, i + 1))?);
         }
+        // A loft reaches a point only from one section: loft down to the last small section,
+        // then close it on the apex.
+        let apex_ref = lrefs.pop().unwrap();
+        let last_ref = lrefs.last().unwrap().clone();
         r.run("solid.loft", json!({"sections": lrefs, "operation": "join", "targets": [body], "name": format!("{} tip", w.name)}))?;
+        r.run("solid.loft", json!({"sections": [last_ref, apex_ref], "operation": "join", "targets": [body], "name": format!("{} tip end", w.name)}))?;
         let apex = frames.last().unwrap();
         out["tip"] = json!({"style": "rounded", "length": round3(length), "apex": apex.world(apex.center).map(round3)});
         extent.push(apex.world(apex.center));
@@ -422,17 +427,22 @@ mod tests {
         let mut r = Record::default();
         let out = make_wing(&mut r, &w).unwrap();
         let lofts: Vec<&Value> = r.0.iter().filter(|(c, _)| c == "solid.loft").map(|(_, a)| a).collect();
-        assert_eq!(lofts.len(), 3);
+        assert_eq!(lofts.len(), 4);
         // The winglet starts from the wing's tip sketch and joins the wing body.
         assert_eq!(lofts[1]["sections"][0], lofts[0]["sections"][1]);
         assert_eq!(lofts[1]["operation"], "join");
         assert_eq!(lofts[1]["targets"], json!(["Wing"]));
         // 4 blend + 3 straight winglet sections after the tip.
         assert_eq!(lofts[1]["sections"].as_array().unwrap().len(), 8);
-        // The rounded tip starts where the winglet ends and closes on an apex point.
+        // The rounded tip starts where the winglet ends, then a two-section loft closes it on
+        // an apex point.
         let cap = lofts[2]["sections"].as_array().unwrap();
         assert_eq!(cap[0], *lofts[1]["sections"].as_array().unwrap().last().unwrap());
-        assert_eq!(cap.last().unwrap()["point"], "apex");
+        assert_eq!(cap.len(), 7);
+        let end = lofts[3]["sections"].as_array().unwrap();
+        assert_eq!(end.len(), 2);
+        assert_eq!(end[0], *cap.last().unwrap());
+        assert_eq!(end[1]["point"], "apex");
         assert_eq!(r.0.iter().filter(|(c, _)| c == "sketch.point").count(), 1);
         assert_eq!(r.0.last().unwrap().0, "solid.mirror");
         assert!(out["winglet"]["sections"].as_array().unwrap().len() == 7);
