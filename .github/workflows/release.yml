@@ -1,0 +1,37 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches the version
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          cargo_ver=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          json_ver=$(python3 -c 'import json;print(json.load(open("plugin.json"))["version"])')
+          [ "$ver" = "$cargo_ver" ] && [ "$ver" = "$json_ver" ] || { echo "tag $ver, Cargo.toml $cargo_ver, plugin.json $json_ver"; exit 1; }
+          echo "VERSION=$ver" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+      - run: cargo test
+      - run: ./build.sh
+      - name: Package
+        run: |
+          mkdir -p out
+          (cd dist && zip -r "../out/solidcraft-airfoil-${VERSION}.zip" solidcraft-airfoil)
+          (cd out && sha256sum "solidcraft-airfoil-${VERSION}.zip" > "solidcraft-airfoil-${VERSION}.zip.sha256")
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --title "Airfoils & Wings $VERSION" \
+            --notes "Airfoil and wing designer plugin for SolidCraft. Install the zip from Preferences > Plugins > Install plugin…, or unzip it into your SolidCraft plugins folder; see the README."

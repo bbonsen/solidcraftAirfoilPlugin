@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-tools
+      - run: cargo test
+      - run: ./build.sh
+      - name: Check the manifest
+        run: |
+          python3 - <<'PY'
+          import json, os
+          m = json.load(open("plugin.json"))
+          size = os.path.getsize("plugin.json")
+          assert size <= 16 * 1024, f"plugin.json is {size} bytes; SolidCraft caps manifests at 16 KiB"
+          assert m["capabilities"] == ["commands@0.1"]
+          print("manifest ok,", size, "bytes")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solidcraft-airfoil
+          path: dist/solidcraft-airfoil
