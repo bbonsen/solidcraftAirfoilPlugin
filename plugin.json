@@ -2,8 +2,10 @@
   "id": "solidcraft-airfoil",
   "name": "Airfoils & Wings",
   "version": "0.1.0",
-  "description": "Design airfoils (NACA 4/5-digit or pasted .dat coordinates) and loft wings with span, taper, sweep, dihedral, twist and elliptical planforms as editable sketches and features.",
-  "capabilities": ["commands@0.1"],
+  "description": "Design airfoils (NACA 4/5-digit or .dat coordinates) and loft wings: span, taper, sweep, dihedral, twist, elliptical planforms, rounded tips and winglets, as editable features.",
+  "capabilities": [
+    "commands@0.1"
+  ],
   "runtime": {
     "module": "plugin.wasm",
     "entries": [
@@ -12,62 +14,408 @@
         "effect": "edit",
         "input_schema": {
           "type": "object",
-          "required": ["root_airfoil", "tip_airfoil", "span", "root_chord", "taper_ratio", "sweep", "dihedral", "twist", "planform", "mirror"],
+          "required": [
+            "root_airfoil",
+            "tip_airfoil",
+            "span",
+            "root_chord",
+            "taper_ratio",
+            "sweep",
+            "dihedral",
+            "twist",
+            "planform",
+            "mirror",
+            "tip",
+            "winglet_height"
+          ],
           "properties": {
-            "root_airfoil": {"type": "string", "title": "Root airfoil", "description": "NACA 4- or 5-digit (e.g. NACA 2412, NACA 23012), or custom", "default": "NACA 2412", "maxLength": 40},
-            "tip_airfoil": {"type": "string", "title": "Tip airfoil", "description": "Empty: same as root. Sections in between blend from root to tip", "default": "", "maxLength": 40},
-            "span": {"type": "number", "title": "Span", "description": "Length of one wing panel, root to tip", "default": 500, "exclusiveMinimum": 0, "maximum": 100000, "unit": "mm"},
-            "root_chord": {"type": "number", "title": "Root chord", "default": 200, "exclusiveMinimum": 0, "maximum": 100000, "unit": "mm"},
-            "taper_ratio": {"type": "number", "title": "Taper ratio", "description": "Tip chord / root chord", "default": 0.5, "exclusiveMinimum": 0, "maximum": 10},
-            "sweep": {"type": "number", "title": "Sweep", "description": "Sweep of the reference line; positive back, negative forward", "default": 0, "minimum": -79, "maximum": 79, "unit": "°"},
-            "dihedral": {"type": "number", "title": "Dihedral", "description": "Negative for anhedral", "default": 0, "minimum": -59, "maximum": 59, "unit": "°"},
-            "twist": {"type": "number", "title": "Twist", "description": "Tip angle relative to root; negative is washout", "default": 0, "minimum": -45, "maximum": 45, "unit": "°"},
-            "planform": {"type": "string", "title": "Planform", "default": "trapezoidal", "oneOf": [{"const": "trapezoidal", "title": "Trapezoidal (straight taper)"}, {"const": "elliptical", "title": "Elliptical"}]},
-            "mirror": {"type": "boolean", "title": "Mirror (full wing)", "description": "Mirror about XZ and join both halves", "default": false},
-            "incidence": {"type": "number", "title": "Root incidence", "description": "Nose-up angle of the root section", "default": 0, "minimum": -45, "maximum": 45, "unit": "°"},
-            "sweep_reference": {"type": "number", "title": "Sweep reference", "description": "Chord position the sweep is measured at: 0 leading edge, 25 quarter chord", "default": 25, "minimum": 0, "maximum": 100, "unit": "%"},
-            "twist_axis": {"type": "number", "title": "Twist axis", "description": "Chord position sections turn about", "default": 25, "minimum": 0, "maximum": 100, "unit": "%"},
-            "sections": {"type": "integer", "title": "Sections", "description": "Sections lofted through, root and tip included (default 5, elliptical 12)", "minimum": 2, "maximum": 50},
-            "points_per_side": {"type": "integer", "title": "Points per surface", "default": 30, "minimum": 8, "maximum": 150},
-            "te_thickness": {"type": "number", "title": "Min. trailing edge", "description": "Opens a sharp trailing edge to this thickness; 0 keeps it sharp", "default": 0.2, "minimum": 0, "maximum": 5, "unit": "%"},
-            "root_coordinates": {"type": "string", "title": "Root coordinates", "description": "With root airfoil custom: Selig or Lednicer .dat text", "default": "", "maxLength": 60000},
-            "tip_coordinates": {"type": "string", "title": "Tip coordinates", "description": "With tip airfoil custom: Selig or Lednicer .dat text", "default": "", "maxLength": 60000},
-            "name": {"type": "string", "title": "Name", "default": "Wing", "maxLength": 60}
+            "root_airfoil": {
+              "type": "string",
+              "title": "Root airfoil",
+              "description": "NACA 4- or 5-digit (e.g. NACA 2412, NACA 23012), or custom",
+              "default": "NACA 2412",
+              "maxLength": 40
+            },
+            "tip_airfoil": {
+              "type": "string",
+              "title": "Tip airfoil",
+              "description": "Empty: same as root. Sections in between blend from root to tip",
+              "default": "",
+              "maxLength": 40
+            },
+            "span": {
+              "type": "number",
+              "title": "Span",
+              "description": "Length of one wing panel, root to tip",
+              "default": 500,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "unit": "mm"
+            },
+            "root_chord": {
+              "type": "number",
+              "title": "Root chord",
+              "default": 200,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "unit": "mm"
+            },
+            "taper_ratio": {
+              "type": "number",
+              "title": "Taper ratio",
+              "description": "Tip chord / root chord",
+              "default": 0.5,
+              "exclusiveMinimum": 0,
+              "maximum": 10
+            },
+            "sweep": {
+              "type": "number",
+              "title": "Sweep",
+              "description": "Sweep of the reference line; positive back, negative forward",
+              "default": 0,
+              "minimum": -79,
+              "maximum": 79,
+              "unit": "°"
+            },
+            "dihedral": {
+              "type": "number",
+              "title": "Dihedral",
+              "description": "Negative for anhedral",
+              "default": 0,
+              "minimum": -59,
+              "maximum": 59,
+              "unit": "°"
+            },
+            "twist": {
+              "type": "number",
+              "title": "Twist",
+              "description": "Tip angle relative to root; negative is washout",
+              "default": 0,
+              "minimum": -45,
+              "maximum": 45,
+              "unit": "°"
+            },
+            "planform": {
+              "type": "string",
+              "title": "Planform",
+              "default": "trapezoidal",
+              "oneOf": [
+                {
+                  "const": "trapezoidal",
+                  "title": "Trapezoidal (straight taper)"
+                },
+                {
+                  "const": "elliptical",
+                  "title": "Elliptical"
+                }
+              ]
+            },
+            "mirror": {
+              "type": "boolean",
+              "title": "Mirror (full wing)",
+              "description": "Mirror about XZ and join both halves",
+              "default": false
+            },
+            "incidence": {
+              "type": "number",
+              "title": "Root incidence",
+              "description": "Nose-up angle of the root section",
+              "default": 0,
+              "minimum": -45,
+              "maximum": 45,
+              "unit": "°"
+            },
+            "sweep_reference": {
+              "type": "number",
+              "title": "Sweep reference",
+              "description": "Chord position the sweep is measured at: 0 leading edge, 25 quarter chord",
+              "default": 25,
+              "minimum": 0,
+              "maximum": 100,
+              "unit": "%"
+            },
+            "twist_axis": {
+              "type": "number",
+              "title": "Twist axis",
+              "description": "Chord position sections turn about",
+              "default": 25,
+              "minimum": 0,
+              "maximum": 100,
+              "unit": "%"
+            },
+            "sections": {
+              "type": "integer",
+              "title": "Sections",
+              "description": "Sections lofted through, root and tip included (default 5, elliptical 12)",
+              "minimum": 2,
+              "maximum": 50
+            },
+            "points_per_side": {
+              "type": "integer",
+              "title": "Points per surface",
+              "default": 30,
+              "minimum": 8,
+              "maximum": 150
+            },
+            "te_thickness": {
+              "type": "number",
+              "title": "Min. trailing edge",
+              "description": "Opens a sharp trailing edge to this thickness; 0 keeps it sharp",
+              "default": 0.2,
+              "minimum": 0,
+              "maximum": 5,
+              "unit": "%"
+            },
+            "root_coordinates": {
+              "type": "string",
+              "title": "Root coordinates",
+              "description": "With root airfoil custom: Selig or Lednicer .dat text",
+              "default": "",
+              "maxLength": 60000
+            },
+            "tip_coordinates": {
+              "type": "string",
+              "title": "Tip coordinates",
+              "description": "With tip airfoil custom: Selig or Lednicer .dat text",
+              "default": "",
+              "maxLength": 60000
+            },
+            "tip": {
+              "type": "string",
+              "title": "Wing tip",
+              "default": "flat",
+              "oneOf": [
+                {
+                  "const": "flat",
+                  "title": "Flat (cut off)"
+                },
+                {
+                  "const": "rounded",
+                  "title": "Rounded"
+                }
+              ]
+            },
+            "tip_length": {
+              "type": "number",
+              "title": "Rounded tip length",
+              "description": "How far a rounded tip reaches past the tip section, % of its chord",
+              "default": 50,
+              "minimum": 5,
+              "maximum": 300,
+              "unit": "%"
+            },
+            "winglet_height": {
+              "type": "number",
+              "title": "Winglet height",
+              "description": "Length of the winglet after its blend; 0 for none",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 100000,
+              "unit": "mm"
+            },
+            "winglet_cant": {
+              "type": "number",
+              "title": "Winglet cant",
+              "description": "From vertical: 0 up, 90 in the wing plane, 180 down",
+              "default": 15,
+              "minimum": 0,
+              "maximum": 180,
+              "unit": "°"
+            },
+            "winglet_radius": {
+              "type": "number",
+              "title": "Winglet blend radius",
+              "description": "% of the tip chord",
+              "default": 30,
+              "minimum": 5,
+              "maximum": 500,
+              "unit": "%"
+            },
+            "winglet_taper": {
+              "type": "number",
+              "title": "Winglet taper",
+              "description": "Winglet tip chord / wing tip chord",
+              "default": 0.5,
+              "exclusiveMinimum": 0,
+              "maximum": 2
+            },
+            "winglet_sweep": {
+              "type": "number",
+              "title": "Winglet sweep",
+              "default": 30,
+              "minimum": -75,
+              "maximum": 75,
+              "unit": "°"
+            },
+            "winglet_toe": {
+              "type": "number",
+              "title": "Winglet toe",
+              "description": "At the winglet tip; positive turns the leading edge outboard",
+              "default": 0,
+              "minimum": -20,
+              "maximum": 20,
+              "unit": "°"
+            },
+            "winglet_airfoil": {
+              "type": "string",
+              "title": "Winglet airfoil",
+              "description": "Empty: same as the wing tip",
+              "default": "",
+              "maxLength": 40
+            },
+            "winglet_coordinates": {
+              "type": "string",
+              "title": "Winglet coordinates",
+              "description": "With winglet airfoil custom: Selig or Lednicer .dat text",
+              "default": "",
+              "maxLength": 60000
+            },
+            "name": {
+              "type": "string",
+              "title": "Name",
+              "default": "Wing",
+              "maxLength": 60
+            }
           }
         },
-        "slots": [{"kind": "ribbon", "name": "Airfoils"}]
+        "slots": [
+          {
+            "kind": "ribbon",
+            "name": "Airfoils"
+          }
+        ]
       },
       {
         "name": "make-airfoil",
         "effect": "edit",
         "input_schema": {
           "type": "object",
-          "required": ["airfoil", "chord", "plane", "angle", "extrude"],
+          "required": [
+            "airfoil",
+            "chord",
+            "plane",
+            "angle",
+            "extrude"
+          ],
           "properties": {
-            "airfoil": {"type": "string", "title": "Airfoil", "description": "NACA 4- or 5-digit (e.g. NACA 0012), or custom", "default": "NACA 2412", "maxLength": 40},
-            "chord": {"type": "number", "title": "Chord", "default": 100, "exclusiveMinimum": 0, "maximum": 100000, "unit": "mm"},
-            "plane": {"type": "string", "title": "Plane", "default": "XZ", "enum": ["XZ", "XY", "YZ"]},
-            "angle": {"type": "number", "title": "Angle", "description": "Nose-up rotation about the leading edge", "default": 0, "minimum": -90, "maximum": 90, "unit": "°"},
-            "extrude": {"type": "number", "title": "Extrude", "description": "0 draws the sketch only", "default": 0, "minimum": 0, "maximum": 100000, "unit": "mm"},
-            "points_per_side": {"type": "integer", "title": "Points per surface", "default": 30, "minimum": 8, "maximum": 150},
-            "te_thickness": {"type": "number", "title": "Min. trailing edge", "description": "0 keeps a sharp trailing edge", "default": 0.2, "minimum": 0, "maximum": 5, "unit": "%"},
-            "coordinates": {"type": "string", "title": "Coordinates", "description": "With airfoil custom: Selig or Lednicer .dat text", "default": "", "maxLength": 60000},
-            "name": {"type": "string", "title": "Name", "description": "Empty: the airfoil's name", "default": "", "maxLength": 60}
+            "airfoil": {
+              "type": "string",
+              "title": "Airfoil",
+              "description": "NACA 4- or 5-digit (e.g. NACA 0012), or custom",
+              "default": "NACA 2412",
+              "maxLength": 40
+            },
+            "chord": {
+              "type": "number",
+              "title": "Chord",
+              "default": 100,
+              "exclusiveMinimum": 0,
+              "maximum": 100000,
+              "unit": "mm"
+            },
+            "plane": {
+              "type": "string",
+              "title": "Plane",
+              "default": "XZ",
+              "enum": [
+                "XZ",
+                "XY",
+                "YZ"
+              ]
+            },
+            "angle": {
+              "type": "number",
+              "title": "Angle",
+              "description": "Nose-up rotation about the leading edge",
+              "default": 0,
+              "minimum": -90,
+              "maximum": 90,
+              "unit": "°"
+            },
+            "extrude": {
+              "type": "number",
+              "title": "Extrude",
+              "description": "0 draws the sketch only",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 100000,
+              "unit": "mm"
+            },
+            "points_per_side": {
+              "type": "integer",
+              "title": "Points per surface",
+              "default": 30,
+              "minimum": 8,
+              "maximum": 150
+            },
+            "te_thickness": {
+              "type": "number",
+              "title": "Min. trailing edge",
+              "description": "0 keeps a sharp trailing edge",
+              "default": 0.2,
+              "minimum": 0,
+              "maximum": 5,
+              "unit": "%"
+            },
+            "coordinates": {
+              "type": "string",
+              "title": "Coordinates",
+              "description": "With airfoil custom: Selig or Lednicer .dat text",
+              "default": "",
+              "maxLength": 60000
+            },
+            "name": {
+              "type": "string",
+              "title": "Name",
+              "description": "Empty: the airfoil's name",
+              "default": "",
+              "maxLength": 60
+            }
           }
         },
-        "slots": [{"kind": "ribbon", "name": "Airfoils"}]
+        "slots": [
+          {
+            "kind": "ribbon",
+            "name": "Airfoils"
+          }
+        ]
       },
       {
         "name": "airfoil-info",
         "effect": "read",
         "input_schema": {
           "type": "object",
-          "required": ["airfoil"],
+          "required": [
+            "airfoil"
+          ],
           "properties": {
-            "airfoil": {"type": "string", "title": "Airfoil", "default": "NACA 2412", "maxLength": 40},
-            "coordinates": {"type": "string", "title": "Coordinates", "default": "", "maxLength": 60000},
-            "points_per_side": {"type": "integer", "title": "Points per surface", "default": 30, "minimum": 8, "maximum": 150},
-            "te_thickness": {"type": "number", "title": "Min. trailing edge", "default": 0, "minimum": 0, "maximum": 5, "unit": "%"}
+            "airfoil": {
+              "type": "string",
+              "title": "Airfoil",
+              "default": "NACA 2412",
+              "maxLength": 40
+            },
+            "coordinates": {
+              "type": "string",
+              "title": "Coordinates",
+              "default": "",
+              "maxLength": 60000
+            },
+            "points_per_side": {
+              "type": "integer",
+              "title": "Points per surface",
+              "default": 30,
+              "minimum": 8,
+              "maximum": 150
+            },
+            "te_thickness": {
+              "type": "number",
+              "title": "Min. trailing edge",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 5,
+              "unit": "%"
+            }
           }
         }
       }
@@ -76,11 +424,16 @@
       "sketch.create",
       "sketch.spline.fit_point",
       "sketch.line",
+      "sketch.point",
       "sketch.finish",
       "solid.loft",
       "solid.mirror",
       "solid.extrude"
     ],
-    "limits": {"fuel": 2000000000, "memory_mib": 64, "deadline_ms": 30000}
+    "limits": {
+      "fuel": 2000000000,
+      "memory_mib": 64,
+      "deadline_ms": 30000
+    }
   }
 }

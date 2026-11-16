@@ -166,7 +166,48 @@ b = one_closed("custom coordinates", bodies)
 near("custom coordinates: volume", b["volume_mm3"], naca00_area(0.15, 0.002) * 100**2 * 200, rel=0.01)
 check("custom coordinates: name from the file", reply["root_airfoil"] == "MY TEST FOIL", reply["root_airfoil"])
 
-# 9. Bad input is refused with the field named, and leaves the design empty.
+# 9. Rounded tip on a rectangular wing. The cap scales the tip section by s = sqrt(1 - (d/R)^2)
+# along its length R, so it adds A c^2 * integral(s^2) = A c^2 * 2R/3.
+c, span, R = 100, 300, 50
+p = {"root_airfoil": "NACA 0012", "span": span, "root_chord": c, "taper_ratio": 1, "sections": 2, "tip": "rounded", "tip_length": 50}
+reply, bodies, _ = build("make-wing", p)
+b = one_closed("rounded tip", bodies)
+near("rounded tip: reaches tip_length past the span", b["bbox"]["max"][1], span + R, rel=2e-3)
+near("rounded tip: volume = panel + 2/3 of a prism as long as the tip", b["volume_mm3"], A * c**2 * (span + 2 * R / 3), rel=0.02)
+near("rounded tip: reported overall span", reply["overall_span"], span + R, rel=1e-6)
+
+# 10. Vertical winglet: the blend radius r, then the straight part up to r + height.
+c, span, h, rad = 100, 300, 60, 0.3
+p = {"root_airfoil": "NACA 0012", "span": span, "root_chord": c, "taper_ratio": 1, "sections": 2,
+     "winglet_height": h, "winglet_cant": 0, "winglet_radius": rad * 100, "winglet_taper": 0.5, "winglet_sweep": 45}
+reply, bodies, _ = build("make-wing", p, save=os.path.join(out_dir, "winglet.sc"))
+b = one_closed("winglet", bodies)
+r = rad * c
+near("winglet: top at blend radius + height", b["bbox"]["max"][2], r + h, rel=1e-3)
+check("winglet: outboard edge just past the blend", span + r < b["bbox"]["max"][1] < span + r + 0.06 * c, f"max y {b['bbox']['max'][1]:.3f}")
+near("winglet: winglet tip trailing edge is aftmost (sweep)", b["bbox"]["max"][0], 0.25 * c + h * math.tan(math.radians(45)) + 0.75 * 0.5 * c, rel=2e-3)
+check("winglet: adds volume", b["volume_mm3"] > A * c**2 * span)
+
+# 11. Canted winglet with a rounded tip, both halves.
+p = {"root_airfoil": "NACA 2412", "tip_airfoil": "NACA 0010", "span": 400, "root_chord": 160, "taper_ratio": 0.5, "sweep": 10,
+     "dihedral": 3, "twist": -2, "mirror": True, "sections": 3, "winglet_height": 50, "winglet_cant": 20,
+     "winglet_airfoil": "NACA 0008", "winglet_toe": 2, "tip": "rounded", "tip_length": 60}
+reply, bodies, _ = build("make-wing", p, save=os.path.join(out_dir, "full-winglet.sc"))
+b = one_closed("winglet + rounded tip + mirror", bodies)
+near("winglet + rounded tip + mirror: symmetric about XZ", b["bbox"]["max"][1] + b["bbox"]["min"][1], 0, abs_=1e-6)
+apex = reply["tip"]["apex"]
+check("winglet + rounded tip + mirror: apex at the top", abs(b["bbox"]["max"][2] - apex[2]) < 0.02 * 50, f"max z {b['bbox']['max'][2]:.3f}, apex {apex}")
+reopened = run([{"command": "inspect.measure", "params": {}}], inp=os.path.join(out_dir, "full-winglet.sc"))[0]
+check("winglet + rounded tip + mirror: saved design reopens", len(reopened["bodies"]) == 1 and reopened["bodies"][0]["closed"])
+
+# 12. Downward winglet.
+p = {"root_airfoil": "NACA 0012", "span": 300, "root_chord": 100, "taper_ratio": 1, "sections": 2,
+     "winglet_height": 40, "winglet_cant": 180, "winglet_radius": 30}
+_, bodies, _ = build("make-wing", p)
+b = one_closed("downward winglet", bodies)
+near("downward winglet: bottom at -(radius + height)", b["bbox"]["min"][2], -(30 + 40), rel=1e-3)
+
+# 13. Bad input is refused with the field named, and leaves the design empty.
 err = run([plugin("make-wing", {"root_airfoil": "NACA 9x12", "span": 100, "root_chord": 50})], allow_fail=True)
 check("bad airfoil is refused naming the field", isinstance(err, str) and "root_airfoil" in err, (err if isinstance(err, str) else "")[-300:])
 

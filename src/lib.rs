@@ -11,10 +11,12 @@
 //! sketches, the loft and the mirror can all be opened and changed afterwards.
 
 pub mod airfoil;
+pub mod tip;
 pub mod wing;
 
 use airfoil::Airfoil;
 use serde_json::{json, Value};
+use tip::{Frame, Winglet};
 use wing::{Planform, WingParams};
 
 /// What a build needs from the host: run one command with JSON args, get the JSON reply.
@@ -61,11 +63,20 @@ pub fn load_airfoil(designation: &str, coordinates: &str, shape: &Shape, field: 
         .map_err(|e| (field.to_owned(), e))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TipStyle {
+    Flat,
+    /// Rounded cap, its length a fraction of the chord at the end.
+    Rounded(f64),
+}
+
 pub struct WingInput {
     pub wing: WingParams,
     pub root: Airfoil,
     pub tip: Airfoil,
     pub name: String,
+    pub tip_style: TipStyle,
+    pub winglet: Option<(Winglet, Airfoil)>,
 }
 
 pub fn parse_wing(v: &Value) -> Result<WingInput, FieldError> {
@@ -99,9 +110,44 @@ pub fn parse_wing(v: &Value) -> Result<WingInput, FieldError> {
     } else {
         load_airfoil(tip_name, tip_coords, &shape, "tip_airfoil")?
     };
+    let tip_style = match text(v, "tip", "flat") {
+        "flat" => TipStyle::Flat,
+        "rounded" => {
+            let l = num(v, "tip_length", 50.0);
+            if !(5.0..=300.0).contains(&l) {
+                return Err(("tip_length".into(), "must be 5 to 300 % of the chord at the tip".into()));
+            }
+            TipStyle::Rounded(l / 100.0)
+        }
+        other => return Err(("tip".into(), format!("`{other}` is not flat or rounded"))),
+    };
+    let height = num(v, "winglet_height", 0.0);
+    let winglet = if height == 0.0 {
+        None
+    } else {
+        let wl = Winglet {
+            height,
+            cant_deg: num(v, "winglet_cant", 15.0),
+            radius: num(v, "winglet_radius", 30.0) / 100.0,
+            taper_ratio: num(v, "winglet_taper", 0.5),
+            sweep_deg: num(v, "winglet_sweep", 30.0),
+            toe_deg: num(v, "winglet_toe", 0.0),
+        };
+        tip::validate_winglet(&wl)?;
+        let wname = text(v, "winglet_airfoil", "").trim();
+        let wcoords = text(v, "winglet_coordinates", "");
+        let foil = if wname.is_empty() && wcoords.trim().is_empty() {
+            tip.clone()
+        } else {
+            load_airfoil(wname, wcoords, &shape, "winglet_airfoil")?
+        };
+        // The blend radius check needs the actual tip section.
+        tip::winglet_frames(&wing, &wing.section(1.0, &tip), &tip, &foil, &wl)?;
+        Some((wl, foil))
+    };
     let name = text(v, "name", "Wing").trim();
     let name = if name.is_empty() { "Wing" } else { name }.to_owned();
-    Ok(WingInput { wing, root, tip, name })
+    Ok(WingInput { wing, root, tip, name, tip_style, winglet })
 }
 
 /// Draw a closed outline (sketch coordinates) into the open sketch: one fit-point spline around
@@ -126,23 +172,49 @@ fn round3(x: f64) -> f64 {
     (x * 1000.0).round() / 1000.0
 }
 
-/// Build the wing: one sketch per section, a loft through them, then the optional mirror.
+/// Sketch one frame: an airfoil outline, or the apex point a rounded tip closes on. Returns the
+/// loft section that refers to it.
+fn draw_frame<R: Runner>(r: &mut R, f: &Frame, name: &str) -> Result<Value, String> {
+    let reply = r.run("sketch.create", json!({"plane": {"origin": f.origin, "x_dir": [1.0, 0.0, 0.0], "y_dir": f.y_dir}, "name": name}))?;
+    match f.apex {
+        Some(p) => {
+            r.run("sketch.point", json!({"point": p, "id": "apex"}))?;
+        }
+        None => draw_outline(r, &f.outline)?,
+    }
+    r.run("sketch.finish", json!({}))?;
+    let mut sec = json!({"sketch": sketch_ref(&reply, name)});
+    if f.apex.is_some() {
+        sec["point"] = json!("apex");
+    }
+    Ok(sec)
+}
+
+fn frame_summary(f: &Frame) -> Value {
+    let le = f.outline.iter().fold([f64::INFINITY, 0.0], |m, p| if p[0] < m[0] { *p } else { m });
+    let at = if f.outline.is_empty() { f.world(f.center) } else { f.world(le) };
+    json!({
+        "position": [round3(at[0]), round3(at[1]), round3(at[2])],
+        "chord": round3(f.chord),
+        "angle": round3(f.angle_deg),
+        "airfoil": f.airfoil,
+    })
+}
+
+/// Build the wing: one sketch per section and a loft through them; then the winglet and the
+/// rounded tip, each a loft from the last section joined onto the body; then the mirror.
 pub fn make_wing<R: Runner>(r: &mut R, w: &WingInput) -> Result<Value, String> {
     let p = &w.wing;
     let stations = p.stations();
     let mut refs = Vec::new();
     let mut sections = Vec::new();
+    let mut end: Option<(Frame, Value)> = None;
     for (i, &eta) in stations.iter().enumerate() {
         let foil = w.root.lerp(&w.tip, eta);
         let sec = p.section(eta, &foil);
-        let sname = format!("{} section {}", w.name, i + 1);
-        let reply = r.run(
-            "sketch.create",
-            json!({"plane": {"origin": [0.0, sec.y, 0.0], "x_dir": [1.0, 0.0, 0.0], "y_dir": [0.0, 0.0, 1.0]}, "name": sname}),
-        )?;
-        draw_outline(r, &sec.outline)?;
-        r.run("sketch.finish", json!({}))?;
-        refs.push(json!({"sketch": sketch_ref(&reply, &sname)}));
+        let frame = tip::panel_frame(p, &sec, &foil);
+        let sref = draw_frame(r, &frame, &format!("{} section {}", w.name, i + 1))?;
+        refs.push(sref.clone());
         sections.push(json!({
             "y": round3(sec.y),
             "chord": round3(sec.chord),
@@ -150,6 +222,7 @@ pub fn make_wing<R: Runner>(r: &mut R, w: &WingInput) -> Result<Value, String> {
             "angle": round3(sec.angle_deg),
             "airfoil": foil.name,
         }));
+        end = Some((frame, sref));
     }
     let loft = r.run("solid.loft", json!({"sections": refs, "operation": "new", "name": w.name, "body_name": w.name}))?;
     let body = loft
@@ -159,14 +232,46 @@ pub fn make_wing<R: Runner>(r: &mut R, w: &WingInput) -> Result<Value, String> {
         .and_then(Value::as_str)
         .unwrap_or(&w.name)
         .to_owned();
+    let (mut end_frame, mut end_ref) = end.expect("at least two sections");
+    let mut extent = end_frame.outline.iter().map(|&q| end_frame.world(q)).collect::<Vec<_>>();
+    let mut out = json!({});
+    if let Some((wl, wfoil)) = &w.winglet {
+        let tip_sec = p.section(1.0, &w.tip);
+        let frames = tip::winglet_frames(p, &tip_sec, &w.tip, wfoil, wl).map_err(|(f, e)| format!("{f}: {e}"))?; // checked in parse_wing
+        let mut lrefs = vec![end_ref.clone()];
+        for (i, f) in frames.iter().enumerate() {
+            lrefs.push(draw_frame(r, f, &format!("{} winglet section {}", w.name, i + 1))?);
+        }
+        r.run("solid.loft", json!({"sections": lrefs, "operation": "join", "targets": [body], "name": format!("{} winglet", w.name)}))?;
+        let last = frames.last().unwrap();
+        out["winglet"] = json!({"sections": frames.iter().map(frame_summary).collect::<Vec<_>>(), "airfoil": wfoil.name});
+        end_ref = lrefs.pop().unwrap();
+        end_frame = last.clone();
+        extent.extend(end_frame.outline.iter().map(|&q| end_frame.world(q)));
+    }
+    if let TipStyle::Rounded(len) = w.tip_style {
+        let length = len * end_frame.chord;
+        let frames = tip::cap_frames(&end_frame, length, 5);
+        let mut lrefs = vec![end_ref];
+        for (i, f) in frames.iter().enumerate() {
+            lrefs.push(draw_frame(r, f, &format!("{} tip section {}", w.name, i + 1))?);
+        }
+        r.run("solid.loft", json!({"sections": lrefs, "operation": "join", "targets": [body], "name": format!("{} tip", w.name)}))?;
+        let apex = frames.last().unwrap();
+        out["tip"] = json!({"style": "rounded", "length": round3(length), "apex": apex.world(apex.center).map(round3)});
+        extent.push(apex.world(apex.center));
+    }
     if p.mirror {
         r.run("solid.mirror", json!({"bodies": [body], "plane": "XZ", "combine": true}))?;
     }
     let rf = wing::reference(p);
-    Ok(json!({
+    let reach = extent.iter().map(|q| q[1]).fold(p.span, f64::max);
+    let halves = if p.mirror { 2.0 } else { 1.0 };
+    let mut reply = json!({
         "body": body,
         "mirrored": p.mirror,
         "span": round3(rf.span),
+        "overall_span": round3(reach * halves),
         "root_chord": round3(p.root_chord),
         "tip_chord": round3(rf.tip_chord),
         "area_mm2": round3(rf.area),
@@ -179,7 +284,13 @@ pub fn make_wing<R: Runner>(r: &mut R, w: &WingInput) -> Result<Value, String> {
         "root_airfoil": w.root.name,
         "tip_airfoil": w.tip.name,
         "sections": sections,
-    }))
+    });
+    for k in ["winglet", "tip"] {
+        if let Some(x) = out.get(k) {
+            reply[k] = x.clone();
+        }
+    }
+    Ok(reply)
 }
 
 pub struct AirfoilInput {
@@ -301,6 +412,50 @@ mod tests {
         assert_eq!(out["span"], 800.0);
         // Spline point count: 2n - 1 for the default 30 points per side.
         assert_eq!(r.0[1].1["points"].as_array().unwrap().len(), 59);
+    }
+
+    #[test]
+    fn winglet_and_rounded_tip_sequence() {
+        let v = json!({"root_airfoil": "NACA 2412", "span": 400, "root_chord": 150, "taper_ratio": 0.6, "sections": 2,
+                       "winglet_height": 60, "winglet_cant": 0, "tip": "rounded", "mirror": true});
+        let w = parse_wing(&v).unwrap();
+        let mut r = Record::default();
+        let out = make_wing(&mut r, &w).unwrap();
+        let lofts: Vec<&Value> = r.0.iter().filter(|(c, _)| c == "solid.loft").map(|(_, a)| a).collect();
+        assert_eq!(lofts.len(), 3);
+        // The winglet starts from the wing's tip sketch and joins the wing body.
+        assert_eq!(lofts[1]["sections"][0], lofts[0]["sections"][1]);
+        assert_eq!(lofts[1]["operation"], "join");
+        assert_eq!(lofts[1]["targets"], json!(["Wing"]));
+        // 4 blend + 3 straight winglet sections after the tip.
+        assert_eq!(lofts[1]["sections"].as_array().unwrap().len(), 8);
+        // The rounded tip starts where the winglet ends and closes on an apex point.
+        let cap = lofts[2]["sections"].as_array().unwrap();
+        assert_eq!(cap[0], *lofts[1]["sections"].as_array().unwrap().last().unwrap());
+        assert_eq!(cap.last().unwrap()["point"], "apex");
+        assert_eq!(r.0.iter().filter(|(c, _)| c == "sketch.point").count(), 1);
+        assert_eq!(r.0.last().unwrap().0, "solid.mirror");
+        assert!(out["winglet"]["sections"].as_array().unwrap().len() == 7);
+        // A vertical winglet adds only its blend radius (0.3 x tip chord 90) and half its
+        // thickness (12 % of the 45 mm winglet tip chord, or less) to each side.
+        let half = out["overall_span"].as_f64().unwrap() / 2.0;
+        assert!(half > 427.0 && half < 427.0 + 0.06 * 90.0, "{half}");
+    }
+
+    #[test]
+    fn rounded_tip_adds_its_length() {
+        let v = json!({"root_airfoil": "NACA 0012", "span": 300, "root_chord": 100, "taper_ratio": 1, "tip": "rounded", "tip_length": 40});
+        let out = make_wing(&mut Record::default(), &parse_wing(&v).unwrap()).unwrap();
+        assert_eq!(out["tip"]["length"], 40.0);
+        assert_eq!(out["overall_span"], 340.0);
+    }
+
+    #[test]
+    fn winglet_errors() {
+        assert_eq!(parse_wing(&json!({"winglet_height": 50, "winglet_radius": 1, "root_airfoil": "NACA 0015"})).err().unwrap().0, "winglet_radius");
+        assert_eq!(parse_wing(&json!({"winglet_height": 50, "winglet_cant": 200})).err().unwrap().0, "winglet_cant");
+        assert_eq!(parse_wing(&json!({"winglet_height": 50, "winglet_airfoil": "x"})).err().unwrap().0, "winglet_airfoil");
+        assert_eq!(parse_wing(&json!({"tip": "pointy"})).err().unwrap().0, "tip");
     }
 
     #[test]

@@ -2,8 +2,9 @@
 
 A [SolidCraft](https://github.com/tangency-labs/solidcraft) plugin for designing airfoils and wings.
 Pick an airfoil for the root and one for the tip, then set the span, chord, taper, sweep (forward
-or back), dihedral and twist. The plugin draws one airfoil sketch per span station and lofts a
-solid through them. It can also mirror the panel into a full wing.
+or back), dihedral and twist. You can also add a winglet and a rounded tip. The plugin draws one
+airfoil sketch per span station and lofts a solid through them. It can also mirror the panel into
+a full wing.
 
 Everything it makes is made with ordinary SolidCraft commands. Your timeline gets plain section
 sketches, a loft and, if you asked for one, a mirror. You can open any of them and edit it, and
@@ -64,7 +65,16 @@ XZ. All lengths are in mm and all angles in degrees.
 | `points_per_side` | 30 | Points per airfoil surface, cosine-spaced, 8 to 150 |
 | `te_thickness` | 0.2 | Minimum trailing-edge thickness, in % of chord. A sharp trailing edge is opened to this, and 0 keeps it sharp |
 | `root_coordinates`, `tip_coordinates` | | Coordinate text, used when the matching airfoil is `custom` |
-| `name` | `Wing` | Name of the loft and its body. The sections are named `<name> section N` |
+| `tip` | `flat` | `rounded` adds a rounded cap after the last section: on the winglet when there is one, otherwise on the wing |
+| `tip_length` | 50 | How far a rounded tip reaches past the last section, in % of that section's chord |
+| `winglet_height` | 0 | Length of the winglet's straight part, after its blend. 0 means no winglet |
+| `winglet_cant` | 15 | Angle from vertical: 0 points straight up, 90 continues in the wing's plane, 180 points straight down |
+| `winglet_radius` | 30 | Radius of the curved blend from wing to winglet, in % of the tip chord. It is refused if it is too tight for the tip section |
+| `winglet_taper` | 0.5 | Winglet tip chord / wing tip chord |
+| `winglet_sweep` | 30 | Sweep of the winglet's twist-axis line. Positive sweeps it aft |
+| `winglet_toe` | 0 | Toe angle at the winglet tip, added gradually along the winglet. Positive turns the leading edge outboard |
+| `winglet_airfoil`, `winglet_coordinates` | *(same as the wing tip)* | The winglet's airfoil. It blends in from the wing tip's airfoil around the curve |
+| `name` | `Wing` | Name of the loft and its body. The sections are named `<name> section N`, `<name> winglet section N` and `<name> tip section N` |
 
 The reply reports the reference values of the wing as built:
 
@@ -73,8 +83,31 @@ The reply reports the reference values of the wing as built:
 - mean aerodynamic chord, and where it sits
 - leading-edge and quarter-chord sweep
 - each section's position, chord, angle and airfoil
+- `overall_span`, which includes the winglet and the rounded tip
+- the winglet's sections and the rounded tip's length and apex, when the wing has them
 
-These are measured over both halves when the wing is mirrored.
+The area, aspect ratio and mean aerodynamic chord are for the wing panel only, without the winglet
+or the rounded tip. These values cover both halves when the wing is mirrored.
+
+#### Winglets
+
+A winglet starts at the wing's tip section. Its sections run around a circular blend of
+`winglet_radius`, in a plane across the span, until they reach the cant angle. Then they run
+straight for `winglet_height`. Each section is cut at right angles to that path.
+
+- **Chord:** stays the wing tip's through the blend, then tapers to `winglet_taper` times the wing
+  tip chord.
+- **Airfoil:** changes from the wing tip's airfoil to the winglet's airfoil around the blend.
+- **Angle:** keeps the wing tip's twist. The toe angle is then added gradually along the straight
+  part.
+
+On an upward winglet, the airfoil's upper surface faces inboard.
+
+#### Rounded tips
+
+A rounded tip shrinks copies of the last section toward a point at 40 % of its chord. The copies
+follow a quarter ellipse of length `tip_length` and close off at an apex point. The tip is added
+past the span (or past the winglet), so `span` is still the length of the main panel.
 
 ### `make-airfoil`: one airfoil sketch
 
@@ -122,13 +155,16 @@ so different airfoils can blend into one another.
 2. Each section becomes a sketch on its own plane at Y = η·span: a fit-point spline around the
    airfoil, plus a line across the trailing edge when the trailing edge is open.
 3. `solid.loft` runs through the sections in order to make a new body.
-4. With `mirror` on, `solid.mirror` reflects the body about XZ and joins the two halves.
+4. A winglet is a second loft, from the wing's tip sketch through the winglet sections, joined
+   onto the wing body.
+5. A rounded tip is a third loft, from the last sketch through the shrinking sections to the apex
+   point, also joined onto the body.
+6. With `mirror` on, `solid.mirror` reflects the body about XZ and joins the two halves.
 
 All of this is one undo step. To change the wing, edit the features, or undo and run the entry
 again with new values.
 
-Not modelled: winglets, cranked (multi-panel) planforms, rounded tips, control surfaces and
-spars. You can model these afterwards with normal SolidCraft features, or build each panel with
+Not modelled: cranked (multi-panel) planforms, control surfaces and spars. You can model these afterwards with normal SolidCraft features, or build each panel with
 its own run.
 
 ## Command line
@@ -153,7 +189,8 @@ and `wing.json` is:
   "entry": "make-wing",
   "params": {"root_airfoil": "NACA 2412", "tip_airfoil": "NACA 0010", "span": 600,
              "root_chord": 220, "taper_ratio": 0.45, "sweep": 8, "dihedral": 3,
-             "twist": -2.5, "mirror": true}}}]
+             "twist": -2.5, "winglet_height": 60, "winglet_cant": 15,
+             "tip": "rounded", "mirror": true}}}]
 ```
 
 ## Build
@@ -194,6 +231,8 @@ makes. It works out the expected values from the textbook formulas on its own:
 - bounding boxes for chord, span, sweep and dihedral
 - mirror symmetry
 - the area of an elliptical planform
+- the length and volume of a rounded tip
+- winglet height, sweep and down-turned winglets
 - custom coordinates
 - that a saved design reopens
 
